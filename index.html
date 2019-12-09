@@ -1,11 +1,401 @@
 <!DOCTYPE html>
 <html>
+<head>
+	<title>JPEG Encoder</title>
+</head>
 <body>
+	<div>
+	  <div id="inputs"  class="inputoutput">
+	    <img style="display: none;" id="imageSrc" alt="No Image" />
+	    <div class="caption">
+	    	<input type="file" id="fileInput" name="file" />
+	    </div>
+	  </div>
+	  <div id="options" style="display: none;">
+	  	<form id="blockform">
+	  		<input id="rdbtn4" type="radio" name="blocksize" value="4" > 4x4<br>
+	  		<input id="rdbtn8" type="radio" name="blocksize" value="8" checked="checked"> 8x8<br>
+	  		<input id="rdbtn16" type="radio" name="blocksize" value="16"> 16x16<br>
+	  	</form>
+	  	<button onclick="JPEG_Encoder()">Convert</button>
+	  </div>
+	  <div id="executing" style="display: none;">
+	  	<!-- Logs would be displayed here -->
+	  </div>
+	  <div class="inputoutput">
+	    <canvas id="canvasOutput" ></canvas>
+	  </div>
 
-<h1>My First Heading</h1>
+	</div>
+	<script type="text/javascript">
+		//JPEG ENCODING STARTS
+		var imagedata = new Array(3); //0th is R 1st G and 2nd B
+		var YCBCR = new Array(3);//0th is Y 1st Cr and 2nd Cb
+		var blocks = new Array(3);//0th is Y 1st Cr and 2nd Cb // for each index of contains index as block of NxN
+		var width;
+		var height;
+		var blockdim = 0;
+		var compresseddata = [];
+		function subsample(block) {
+			var blocklength = block.length;
+			var reslength = blocklength - (blocklength%2); // works on odd valued block size
+			var res = new Array(reslength/2);
+			for (var i = 0; i < reslength/2; i++) {
+				res[i] = new Array(reslength/2).fill(0);
+			}
+			for (var i = 0; i < res.length; i++) {
+				for (var j = 0; j < res.length; j++) {
+					res[i][j] = block[2*i][2*j];
+				}
+			}
+			return res;
+		};
+		function YCbCrtosubsampledblocks() {
+			blocks = new Array(3);
+			var subblock = [];
+			//making blocks
+			for (var i = 1; i < 3; i++) {
+				YCBCR[i] = subsample(YCBCR[i]);
+			}
+			for (var i = 0; i < 3; i++) {
+				blocks[i] = new Array(parseInt(YCBCR[i].length/blockdim));
+				for (var j = 0; j < YCBCR[i].length/blockdim; j++) {
+					blocks[i][j] = new Array(parseInt(YCBCR[i][j].length/blockdim))
+					for (var k = 0; k < YCBCR[i][j].length/blockdim; k++) {
+						blocks[i][j][k] = new Array(blockdim);
+						for (var l = 0; l < blockdim; l++) {
+							blocks[i][j][k][l] = YCBCR[i][j*blockdim].slice(k*blockdim,((k+1)*blockdim));
+							// blocks[i][j][k][l]= new Array(blockdim);
+							// for (var m = 0; m < blockdim; m++) {
+							// 	blocks[i][j][k][l][m] = YCBCR[i][j*blockdim+l][k*blockdim+m];
+							// }
+						}
+					}
+				}
+			}
+			// for (var i = 1; i < blocks.length; i++) {
+			// 	for (var j = 0; j < blocks[i].length; j++) {
+			// 		for (var k = 0; k < blocks[i][j].length; k++) {
+			// 			blocks[i][j][k] = subsample(blocks[i][j][k]);						
+			// 		}
+			// 	}
+			// }
+		};
+		function load_rgb() {
+			var input = document.getElementById("canvasOutput");
+			var inputContext = input.getContext("2d");
+			var imgData = inputContext.getImageData(0, 0, input.width, input.height)
+			var data = imgData.data;
+			imagedata[0] = [];
+			imagedata[1] = [];
+			imagedata[2] = [];
+			width = input.width;
+			height = input.height;
+			var x = 0;
+			var R=[],G=[],B=[];
+			for (var i = 0; i < height; i++) {
+				R = [];
+				G = [];
+				B = [];
+				for (var j = 0; j < width; j++) {
+					R.push(data[(i*4*width)+j*4]);
+					G.push(data[(i*4*width)+(j*4)+1]);
+					B.push(data[(i*4*width)+(j*4)+2]);
+				}
+				imagedata[0].push(R);
+				imagedata[1].push(G);
+				imagedata[2].push(B);
+			}
+		};
+		function RGBtoYCbCr() {
+			YCBCR[0] = [];
+			YCBCR[1] = [];
+			YCBCR[2] = [];
+			var Y=[],CB=[],CR=[];
+			for (var i = 0; i < height; i++) {
+				Y=[];
+				CB =[];
+				CR=[];
+				for (var j = 0; j < width; j++) {
+					Y.push(Math.round(16+(0.257 * imagedata[0][i][j]) + (0.504 *imagedata[1][i][j]) + (0.098 * imagedata[2][i][j]) ));
+					CB.push(Math.round(128 +(0.148 * imagedata[0][i][j]) - (0.291 *imagedata[1][i][j]) + (0.439 * imagedata[2][i][j]) ));
+					CR.push(Math.round(128 +(0.439 * imagedata[0][i][j]) - (0.368 *imagedata[1][i][j]) - (0.071 * imagedata[2][i][j]) ));
+				}
+				YCBCR[0].push(Y);
+				YCBCR[1].push(CB);
+				YCBCR[2].push(CR);
+			}
+		};
+		function quantization(block) {
+			quant_mat = [[16,11,10,16,24,40,51,61],
+						[12,12,14,19,26,58,60,55],
+						[14,13,16,24,40,57,69,56],
+						[14,17,22,29,51,87,80,62],
+						[18,22,37,56,68,109,103,77],
+						[24,35,55,64,81,104,113,92],
+						[49,64,78,87,103,121,120,101],
+						[72,92,95,98,112,100,103,99]];
+			if(block.length == 16){
+				quant_mat = [
+								[16,11,10,16,24,40,51,61,16,11,10,16,24,40,51,61],
+								[16,11,10,16,24,40,51,61,16,11,10,16,24,40,51,61],
+								[12,12,14,19,26,58,60,55,12,12,14,19,26,58,60,55],
+								[12,12,14,19,26,58,60,55,12,12,14,19,26,58,60,55],
+								[14,13,16,24,40,57,69,56,14,13,16,24,40,57,69,56],
+								[14,13,16,24,40,57,69,56,14,13,16,24,40,57,69,56],
+								[14,17,22,29,51,87,80,62,14,17,22,29,51,87,80,62],
+								[14,17,22,29,51,87,80,62,14,17,22,29,51,87,80,62],
+								[18,22,37,56,68,109,103,77,18,22,37,56,68,109,103,77],
+								[18,22,37,56,68,109,103,77,18,22,37,56,68,109,103,77],
+								[24,35,55,64,81,104,113,92,24,35,55,64,81,104,113,92],
+								[24,35,55,64,81,104,113,92,24,35,55,64,81,104,113,92],
+								[49,64,78,87,103,121,120,101,49,64,78,87,103,121,120,101],
+								[49,64,78,87,103,121,120,101,49,64,78,87,103,121,120,101],
+								[72,92,95,98,112,100,103,99,72,92,95,98,112,100,103,99],
+								[72,92,95,98,112,100,103,99,72,92,95,98,112,100,103,99]
+							];
+			}
+			var res = new Array(blockdim);
+			for (var i = 0; i < blockdim; i++) {
+				res[i] = new Array(blockdim).fill(0)
+			}
+			for (var i = 0; i < blockdim ; i++) {
+				for (var j = 0; j < blockdim; j++) {
+					res[i][j] = Math.round(block[i][j]/quant_mat[i][j]);
+				}
+			}
+			return res;
+		}
+		function dct2d(inputblock) {
+			var m = inputblock.length;
+			var n = inputblock.length;
+			var dct = new Array(m);
+			for (var i = 0; i < m; i++) {
+				dct[i] = new Array(n).fill(0);
+			}
+			var cu=0,cv=0,dcttemp=0,sum=0,cons = 2/Math.sqrt(m*n);
+			for (var u = 0; u < m; u++) {
+				for (var v = 0; v < n; v++) {
+					cv=1;
+		            if (u == 0 && v == 0 )
+		                cu = 1 / 2;
+		            else if (u==0 || v==0)
+		                cu = 1/ Math.sqrt(2);
+		            else
+		                cu=1;
 
-<p>My first paragraph.</p>
-<p>updated</p>
 
+		            //var stat = cons*cu*cv;
+		            sum =0;
+		            for (var x = 0; x < m; x++) {
+		                for (var y = 0; y < n; y++) {
+		                    //dcttemp = inputblock[x][y] * Math.cos((((2*x)+1)*u*Math.PI)/(2*m)) *Math.cos((((2*y)+1)*v*Math.PI)/(2*n));
+		                    // dcttemp = inputblock[k][l] * Math.cos(((2 * k) + 1) * i * Math.PI / (2 * m)) * Math.cos(((2 * l) + 1) * j * Math.PI / (2 * n));
+		                    //sum = sum + dcttemp;
+		                    sum += inputblock[x][y] * Math.cos((((2*x)+1)*u*Math.PI)/(2*m)) *Math.cos((((2*y)+1)*v*Math.PI)/(2*n));
+		                }
+		            }
+		            dct[u][v] = cons*cu* sum;
+				}
+			}
+			return dct;
+		};
+		// function dct2d(inputblock) {
+
+		// 	var dct = new Array(m);
+		// 	var m=blockdim;
+		// 	var n=blockdim;
+		// 	for (var i = 0; i < m; i++) {
+		// 		dct[i] = new Array(n).fill(0);
+		// 	}
+		//     for (var u=0;u<m;u++) {
+		//         for (var v=0;v<n;v++) {
+		//             var sum=0;
+		//             var cu=1,cv=1;
+		//             if (u == 0)
+		//                 cu = 1 / Math.sqrt(2);
+		//             if (v == 0)
+		//                 cv = 1 / Math.sqrt(2);
+		//             var a=0,b=0;
+		//             for (var i=0;i<m;i++) {
+		//                 for (var j=0;j<n;j++) {
+		//                     a = Math.cos(((2*i+1)/(2.0*m))*u*Math.PI);
+		//                     b = Math.cos(((2*j+1)/(2.0*n))*v*Math.PI);
+		//                     sum += inputblock[i][j]*a*b;
+		//                 }
+		//             }
+		//             sum = sum*cu*cv/4;
+		//             dct[u][v] = sum;
+
+		//         }
+		//     }
+		//     return dct;
+		// };
+		function zigzag(block){
+			zz4 = [0, 1, 4, 8,
+				   5, 2, 3, 6,
+				   9, 12, 13, 10,
+				   7, 11, 14, 15];
+			zz8 = [	0,  1,  8,  16, 9,  2,  3,  10,
+					17, 24, 32, 25, 18, 11, 4,  5, 
+					12, 19, 26, 33, 40, 48, 41, 34, 
+					27, 20, 13, 6,  7,  14, 21, 28, 
+					35, 42, 49, 56, 57, 50, 43,	36, 
+					29, 22, 15, 23, 30, 37, 44, 51, 
+					58, 59, 52, 45, 38, 31, 39, 46, 
+					53, 60, 61, 54, 47, 55, 62, 63];
+			zz16 = [
+					0, 1, 16, 32, 17, 2, 3, 18, 33, 48, 64, 49, 34, 19, 4, 5, 
+					20, 35, 50, 65, 80, 96, 81, 66, 51, 36, 21, 6, 7, 22, 37, 52,
+					67, 82, 97, 112, 128, 113, 98, 83, 68, 53, 38, 23, 8, 9, 24, 39,
+					54, 69, 84, 99, 114, 129, 144, 160, 145, 130, 115, 100, 85, 70, 55,	40, 
+					25, 10, 11, 26, 41, 56, 71, 86, 101, 116, 131, 146, 161, 176, 192,	177, 
+					162, 147, 132, 117, 102, 87, 72, 57, 42, 27, 12, 13, 28, 43, 58, 73, 
+					88, 103, 118, 133, 148, 163, 178, 193, 208, 224, 209, 194, 179, 164, 149, 134, 119, 
+					104, 89, 74, 59, 44, 29, 14, 15, 30, 45, 60, 75, 90, 105, 120, 135, 
+					150, 165, 180, 195, 210, 225, 240, 241, 226, 211, 196, 181, 166, 151, 136, 121, 106, 
+					91, 76, 61, 46, 31, 47, 62, 77, 92, 107, 122, 137, 152, 167, 182, 197, 212, 
+					227, 242, 243, 228, 213, 198, 183, 168, 153, 138, 123, 108, 93, 78, 63, 79, 
+					94, 109, 124, 139, 154, 169, 184, 199, 214, 229, 244, 245, 230, 215, 200, 185,
+					170, 155, 140, 125, 110, 95, 111, 126, 141, 156, 171, 186, 201, 216, 231, 246,
+					247, 232, 217, 202, 187, 172, 157, 142, 127, 143, 158, 173, 188, 203, 218, 233,
+					248, 249, 234, 219, 204, 189, 174, 159, 175, 190, 205, 220, 235, 
+					250, 251, 236, 221, 206, 191, 207, 222, 237, 252, 253, 238, 223, 239, 254, 255
+					];
+			var z = zz4;
+			if(blockdim==8){
+				z = zz8;
+			}
+			else if (blockdim==16) {
+				z = zz16;
+			}
+			var res = [];
+			var x;
+			var y;
+			for (var i = 0; i < z.length; i++) {
+				x=parseInt(z[i]/blockdim);
+				y=z[i]%blockdim;
+				res.push(block[x][y]);
+			}
+			return res;
+		}
+		function runlengthencoding(zigzagarray) {
+			var res = [];
+			var count = 0;
+			var x = 0;
+			for (var i = 0; i < zigzagarray.length; i++) {
+				if (zigzagarray[i]==0){
+					count++;
+					continue;
+				}
+				res.push([zigzagarray[i],count]);
+				count = 0;
+			}
+			if (count>0)
+				res.push([0,count]);
+			res.push([0,0]) //end of block
+			return res;
+		}
+		function JPEG_Encoder(argument) {
+			document.getElementById('executing').style="";
+			
+			document.getElementById('executing').innerHTML =  "Executing...";
+			var executing = document.getElementById('executing').innerHTML;
+
+			var form = document.getElementById("blockform");
+			document.getElementById('executing').innerHTML = executing  + "block size = " + form.elements["blocksize"].value;
+			blockdim = parseInt(form.elements["blocksize"].value);
+			
+			load_rgb();
+			executing = document.getElementById('executing').innerHTML;
+			document.getElementById('executing').innerHTML = executing + "<br>" + "RGB loaded";
+			
+			RGBtoYCbCr();
+			executing = document.getElementById('executing').innerHTML;
+			document.getElementById('executing').innerHTML = executing + "<br>" + "YCBCR loaded";
+
+			YCbCrtosubsampledblocks();
+			executing = document.getElementById('executing').innerHTML;
+			document.getElementById('executing').innerHTML = executing + "<br>" + "YCBCR subsampled and converted into blocks";
+
+			var output = new Array(3);
+			for (var i = 0; i < 3; i++) {
+				output[i]=[];
+				for (var j = 0; j < blocks[i].length; j++) {
+					for (var k = 0; k < blocks[i][j].length; k++) {
+						blocks[i][j][k] = dct2d(blocks[i][j][k]);
+						blocks[i][j][k] = quantization(blocks[i][j][k]);
+						blocks[i][j][k] = zigzag(blocks[i][j][k]);
+						blocks[i][j][k] = runlengthencoding(blocks[i][j][k]);
+						for (var l = 0; l<blocks[i][j][k].length; l++) {
+							output[i].push(blocks[i][j][k][0])
+							output[i].push(blocks[i][j][k][1])
+						}
+					}
+
+				}
+			}
+			compresseddata = output[0].concat(output[1]);
+			compresseddata = compresseddata.concat(output[2]);
+			// var freqs = {};
+			// for (var j = 0; j < 3; j++) {
+			// 	for (var i = 0; i<=output[j].length;i++){
+			// 	    if (output[j][i] in freqs){
+			// 	        freqs[output[j][i]]++;
+			// 	    }
+			// 	    else{
+			// 	        freqs[output[j][i]] = 1;
+			// 	    }
+			// 	}				
+			// }
+		 //    var letters = [];
+	  //       for (var ch in freqs){
+	  //           letters.push([freqs[ch],ch]);
+	  //       }
+	        
+		 //    while(letters.length>1){
+		 //            var leasttwo = letters.slice(0,2);
+		 //            var therest = letters.slice(2,letters.length);
+		 //            var combfreq = letters[0][0] + letters[1][0];
+		 //            letters = therest;
+		 //            //console.log(letters);
+		 //            var two = [combfreq,leasttwo];
+		 //            letters.push(two);
+		 //            //console.log(letters);
+		 //            letters.sort();
+		 //    }
+		 //    tree = letters[0];
+		 //    var p = tree[1];
+   //          if (typeof p === 'string'){
+   //              return p;
+   //      	}
+   //          else
+   //      	{
+   //              return (Array(trimtree(p[0]),trimtree(p[1])));
+   //      	}
+
+			executing = document.getElementById('executing').innerHTML;
+			document.getElementById('executing').innerHTML = executing + "<br>" + "Done Encoding ready data to decode";
+			executing = document.getElementById('executing').innerHTML;
+			document.getElementById('executing').innerHTML = executing + "<br>" + "total size of data i.e pixels * 3(of R,G,B) = " + (width*height*4)+ "total compresseddata with <br>RLE size = " + (compresseddata.length);
+		};
+	</script>
+	<script type="text/javascript">
+	  let imgElement = document.getElementById('imageSrc');
+	  let inputElement = document.getElementById('fileInput');
+	  inputElement.addEventListener('change', (e) => {
+	    imgElement.src = URL.createObjectURL(e.target.files[0]);
+	  }, false);
+	  imgElement.onload = function(){
+	  	var image = document.getElementById('imageSrc');
+	  	canvas = document.getElementById('canvasOutput');
+	  	context = canvas.getContext('2d');
+	  	canvas.width = image.width+((8-image.width%8)%8);
+
+	  	canvas.height = image.height+((8-image.height%8)%8);
+	  	context.drawImage(image, 0, 0);
+	  	document.getElementById('options').style="";
+	  }
+	</script>
 </body>
 </html>
